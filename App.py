@@ -3,9 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import pickle
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -17,28 +15,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        color: #1f77b4;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 10px;
-        margin: 0.5rem 0;
-    }
-    .stock-header {
-        color: #2e86ab;
-        border-bottom: 2px solid #2e86ab;
-        padding-bottom: 0.5rem;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Check for optional dependencies
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+    st.warning("Plotly not available. Using basic charts.")
 
 @st.cache_data
 def load_stock_data():
@@ -49,14 +33,30 @@ def load_stock_data():
         return data
     except FileNotFoundError:
         st.error("❌ stock_data.pkl file not found. Please run generate_data.py first.")
+        st.info("""
+        **To generate the data file:**
+        1. Create a file called `generate_data.py` with the code provided
+        2. Run: `python generate_data.py`
+        3. Restart this app
+        """)
         return None
     except Exception as e:
         st.error(f"❌ Error loading data: {e}")
         return None
 
+def create_basic_chart(data, x_col, y_col, color_col, title):
+    """Create a basic line chart using Streamlit's native charting"""
+    chart_data = data.pivot_table(
+        index=x_col, 
+        columns=color_col, 
+        values=y_col
+    ).reset_index()
+    
+    st.line_chart(chart_data.set_index(x_col), use_container_width=True)
+
 def main():
     # Header
-    st.markdown('<h1 class="main-header">📈 Stock Prediction Dashboard</h1>', unsafe_allow_html=True)
+    st.title("📈 Stock Prediction Dashboard")
     st.markdown("### MADSC102 Final Project - Multi-Feature ML Prediction")
     
     # Load data
@@ -64,7 +64,65 @@ def main():
         stock_data = load_stock_data()
     
     if stock_data is None:
-        st.stop()
+        # Show instructions for first-time setup
+        st.markdown("""
+        ## First-time Setup Required
+        
+        1. **Create the data file** by running this Python code:
+        ```python
+        # generate_data.py
+        import pandas as pd
+        import numpy as np
+        import pickle
+
+        def generate_sample_data():
+            np.random.seed(42)
+            dates = pd.date_range(start='2024-01-01', end='2024-12-10', freq='D')
+            symbols = ['MSFT', 'AAPL', 'GOOGL', 'AMZN', 'TSLA']
+            
+            all_data = []
+            for symbol in symbols:
+                base_price = np.random.uniform(100, 300)
+                prices = [base_price]
+                
+                for i in range(1, len(dates)):
+                    change = np.random.normal(0, 2)
+                    new_price = prices[-1] + change
+                    new_price = max(new_price, 10)
+                    prices.append(new_price)
+                
+                for i, date in enumerate(dates):
+                    price = prices[i]
+                    volume = np.random.randint(1000000, 50000000)
+                    prediction = price + np.random.normal(0, 3)
+                    
+                    all_data.append({
+                        'date': date,
+                        'symbol': symbol,
+                        'open_price': price - np.random.uniform(0, 2),
+                        'high_price': price + np.random.uniform(0, 3),
+                        'low_price': price - np.random.uniform(1, 4),
+                        'close_price': price,
+                        'volume': volume,
+                        'prediction': prediction,
+                        'prediction_error': np.random.normal(0, 2)
+                    })
+            
+            df = pd.DataFrame(all_data)
+            df['date'] = pd.to_datetime(df['date'])
+            return df
+
+        # Generate and save data
+        stock_data = generate_sample_data()
+        with open('stock_data.pkl', 'wb') as f:
+            pickle.dump(stock_data, f)
+        print("Data generated successfully!")
+        ```
+        
+        2. **Run the script** in your environment
+        3. **Restart this app**
+        """)
+        return
     
     # Display data overview
     st.sidebar.markdown("## 📊 Data Overview")
@@ -141,17 +199,28 @@ def main():
             index=3
         )
         
-        # Create interactive price chart
-        fig = px.line(
-            filtered_data,
-            x='date',
-            y=price_type,
-            color='symbol',
-            title=f'{price_type.replace("_", " ").title()} Over Time',
-            labels={price_type: 'Price ($)', 'date': 'Date'}
-        )
-        fig.update_layout(height=500, showlegend=True)
-        st.plotly_chart(fig, use_container_width=True)
+        if PLOTLY_AVAILABLE:
+            # Use Plotly if available
+            fig = px.line(
+                filtered_data,
+                x='date',
+                y=price_type,
+                color='symbol',
+                title=f'{price_type.replace("_", " ").title()} Over Time',
+                labels={price_type: 'Price ($)', 'date': 'Date'}
+            )
+            fig.update_layout(height=500, showlegend=True)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            # Use Streamlit's native chart
+            st.line_chart(
+                filtered_data.pivot_table(
+                    index='date', 
+                    columns='symbol', 
+                    values=price_type
+                ),
+                use_container_width=True
+            )
     
     with tab2:
         st.markdown("### Prediction Analysis")
@@ -164,34 +233,39 @@ def main():
         
         stock_data_filtered = filtered_data[filtered_data['symbol'] == selected_stock]
         
-        # Create prediction vs actual chart
-        fig = go.Figure()
-        
-        fig.add_trace(go.Scatter(
-            x=stock_data_filtered['date'],
-            y=stock_data_filtered['close_price'],
-            mode='lines',
-            name='Actual Close Price',
-            line=dict(color='blue', width=2)
-        ))
-        
-        fig.add_trace(go.Scatter(
-            x=stock_data_filtered['date'],
-            y=stock_data_filtered['prediction'],
-            mode='lines',
-            name='Predicted Price',
-            line=dict(color='red', width=2, dash='dash')
-        ))
-        
-        fig.update_layout(
-            title=f'Actual vs Predicted Prices for {selected_stock}',
-            xaxis_title='Date',
-            yaxis_title='Price ($)',
-            height=500,
-            showlegend=True
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        if PLOTLY_AVAILABLE:
+            # Create prediction vs actual chart with Plotly
+            fig = go.Figure()
+            
+            fig.add_trace(go.Scatter(
+                x=stock_data_filtered['date'],
+                y=stock_data_filtered['close_price'],
+                mode='lines',
+                name='Actual Close Price',
+                line=dict(color='blue', width=2)
+            ))
+            
+            fig.add_trace(go.Scatter(
+                x=stock_data_filtered['date'],
+                y=stock_data_filtered['prediction'],
+                mode='lines',
+                name='Predicted Price',
+                line=dict(color='red', width=2, dash='dash')
+            ))
+            
+            fig.update_layout(
+                title=f'Actual vs Predicted Prices for {selected_stock}',
+                xaxis_title='Date',
+                yaxis_title='Price ($)',
+                height=500,
+                showlegend=True
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            # Use Streamlit's native chart
+            chart_data = stock_data_filtered[['date', 'close_price', 'prediction']].set_index('date')
+            st.line_chart(chart_data, use_container_width=True)
         
         # Prediction accuracy metrics
         st.markdown("#### Prediction Accuracy")
@@ -209,6 +283,10 @@ def main():
         with col3:
             accuracy_within_1 = (pred_errors.abs() <= 1).mean() * 100
             st.metric("Accuracy within $1", f"{accuracy_within_1:.1f}%")
+        
+        # Show error distribution
+        st.markdown("#### Prediction Error Distribution")
+        st.bar_chart(pred_errors.value_counts().sort_index())
     
     with tab3:
         st.markdown("### Stock Comparison")
@@ -221,24 +299,15 @@ def main():
         
         # Create comparison chart
         if comparison_metric == 'prediction_error':
-            # For errors, show absolute values
             comp_data = filtered_data.groupby('symbol')[comparison_metric].apply(lambda x: x.abs().mean()).reset_index()
             y_label = 'Absolute Error ($)'
         else:
             comp_data = filtered_data.groupby('symbol')[comparison_metric].mean().reset_index()
             y_label = 'Average ' + comparison_metric.replace('_', ' ').title()
         
-        fig = px.bar(
-            comp_data,
-            x='symbol',
-            y=comparison_metric,
-            title=f'{y_label} by Stock',
-            labels={'symbol': 'Stock Symbol', comparison_metric: y_label}
-        )
-        fig.update_layout(height=500)
-        st.plotly_chart(fig, use_container_width=True)
+        st.bar_chart(comp_data.set_index('symbol'))
         
-        # Correlation heatmap
+        # Show correlation matrix as a table
         st.markdown("#### Price Correlation Matrix")
         pivot_data = filtered_data.pivot_table(
             index='date', 
@@ -246,13 +315,7 @@ def main():
             values='close_price'
         ).corr()
         
-        fig = px.imshow(
-            pivot_data,
-            title="Correlation Between Stock Prices",
-            color_continuous_scale='RdBu_r',
-            aspect="auto"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        st.dataframe(pivot_data.style.background_gradient(cmap='RdBu_r'), use_container_width=True)
     
     with tab4:
         st.markdown("### Raw Data View")
